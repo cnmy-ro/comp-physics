@@ -1,2 +1,3 @@
-# physics
-Re-learning physics, via simulations
+# Physics
+
+Physical simulations and stuff.
