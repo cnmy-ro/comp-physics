@@ -32,7 +32,7 @@ DT = 1e-4  # time step [s]
 
 
 
-def init_viz(spins, gradient, full_traj, readout_traj, fig, axs):
+def init_viz(spins, gradient, fig, axs):
 
     # Draw spin density
     spin_plots = []
@@ -62,8 +62,8 @@ def init_viz(spins, gradient, full_traj, readout_traj, fig, axs):
     # Draw trajectory
     full_traj_plot = axs[1].plot([], [], ls='dashed')[0]
     readout_traj_plot = axs[1].plot([], [])[0]
-    axs[1].set_xlim(-1, 1)
-    axs[1].set_ylim(-1, 1)
+    axs[1].set_xlim(-0.5, 0.5)
+    axs[1].set_ylim(-0.5, 0.5)
 
     return spin_plots, gx_plot, gy_plot, full_traj_plot, readout_traj_plot
 
@@ -105,9 +105,8 @@ def update_viz(
 
 def update_spins(spins, gradients):
     gx, gy = gradients
-    for x in range(POS_X.shape[0]):
-        for y in range(POS_X.shape[1]):
-            spins[x, y] *= np.exp(1j * GAMMA * (gx*POS_X[x, y] + gy*POS_Y[x, y]) * DT)
+    bz_field = gx * POS_X + gy * POS_Y
+    spins = spins * np.exp(1j * GAMMA * bz_field * DT)
     return spins
 
 
@@ -132,44 +131,74 @@ def main():
 
     # Init viz
     fig, axs = plt.subplots(1,2,figsize=(12, 5))
-    spin_plots, gx_plot, gy_plot, full_traj_plot, readout_traj_plot = init_viz(spins, [0,0], full_traj, readout_traj, fig, axs)
-    plt.ion()
-    plt.show()
+    spin_plots, gx_plot, gy_plot, full_traj_plot, readout_traj_plot = init_viz(spins, [0,0], fig, axs)
+    plt.ion(); plt.show()
     
-    # Run gradenc
     gradient_history = []
-    for rep in range(num_phase_encodes + 1):
 
-        # Local time inside the rep
-        t_vec = np.arange(0, TR, DT)
+    # Rep local time
+    t_vec = np.arange(0, TR, DT)
 
-        for t in t_vec:                    
+
+    # Positioning: to top-left corner in kspace
+    for t in t_vec:
+
+        # PE gradient
+        if t >= T_GY_START and t < (T_GY_START + DURATION_GY):
+            gy = 0.5 * G_PEAK
+            gradient_history.append([gx, gy])
+            full_traj = update_trajectory(full_traj, gradient_history)
+
+        # FE gradient and readout
+        elif t >= T_GX_START and t < (T_GX_START + DURATION_GX):
+            gx = -0.5 * G_PEAK
+            gradient_history.append([gx, gy])
+            full_traj = update_trajectory(full_traj, gradient_history)
+
+        # All other time periods
+        else:
+            gx, gy = 0, 0
+            gradient_history.append([gx, gy])
+
+        spins = update_spins(spins, [gx, gy])            
+        update_viz(
+            spins, [gx, gy], full_traj, readout_traj, 
+            fig, axs, spin_plots, gx_plot, gy_plot, full_traj_plot, readout_traj_plot
+            )   
+
+
+    # Acquisition
+    for rep in range(num_phase_encodes):        
+
+        for t in t_vec:
 
             # PE gradient
-            if t > T_GY_START and t < (T_GY_START + DURATION_GY):
-                # If first rep, move kspace position from origin to bottom-left corner
-                if rep == 0: gy = -0.5 * G_PEAK
-                else:        gy = (1/POS_X.shape[1]) * G_PEAK
-                full_traj = update_trajectory(full_traj, gradient_history)
+            if t >= T_GY_START and t < (T_GY_START + DURATION_GY):
+                if rep > 0:
+                    gy = -(1/num_phase_encodes) * G_PEAK
+                    gradient_history.append([gx, gy])
+                    full_traj = update_trajectory(full_traj, gradient_history)
 
             # FE gradient and readout
-            elif t > T_GX_START and t < (T_GX_START + DURATION_GX):
-                # If first rep, move kspace position from origin to bottom-left corner
-                if rep == 0: gx = -0.5 * G_PEAK
-                else:        gx = G_PEAK
-                full_traj = update_trajectory(full_traj, gradient_history)
+            elif t >= T_GX_START and t < (T_GX_START + DURATION_GX):
+                if rep % 2 == 0: gx = G_PEAK
+                else:            gx = -G_PEAK
+                gradient_history.append([gx, gy])
+                full_traj = update_trajectory(full_traj, gradient_history)                
                 readout_traj = update_trajectory(readout_traj, gradient_history)                
             
             # All other time periods in the rep
             else:
                 gx, gy = 0, 0
+                gradient_history.append([gx, gy])
 
-            gradient_history.append([gx, gy])
             spins = update_spins(spins, [gx, gy])            
             update_viz(
                 spins, [gx, gy], full_traj, readout_traj, 
                 fig, axs, spin_plots, gx_plot, gy_plot, full_traj_plot, readout_traj_plot
                 )
+
+    plt.ioff(); plt.show()
 
 
 if __name__ == '__main__':
